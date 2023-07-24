@@ -81,6 +81,7 @@ class RequestQuotaTest extends BaseRequestTest {
     properties.put(KafkaConfig.GroupInitialRebalanceDelayMsProp, "0")
     properties.put(KafkaConfig.AuthorizerClassNameProp, classOf[RequestQuotaTest.TestAuthorizer].getName)
     properties.put(KafkaConfig.PrincipalBuilderClassProp, classOf[RequestQuotaTest.TestPrincipalBuilder].getName)
+    properties.put(KafkaConfig.UnstableApiVersionsEnableProp, "true")
   }
 
   @BeforeEach
@@ -301,7 +302,7 @@ class RequestQuotaTest extends BaseRequestTest {
           new OffsetCommitRequest.Builder(
             new OffsetCommitRequestData()
               .setGroupId("test-group")
-              .setGenerationId(1)
+              .setGenerationIdOrMemberEpoch(1)
               .setMemberId(JoinGroupRequest.UNKNOWN_MEMBER_ID)
               .setTopics(
                 Collections.singletonList(
@@ -426,7 +427,7 @@ class RequestQuotaTest extends BaseRequestTest {
           OffsetsForLeaderEpochRequest.Builder.forConsumer(epochs)
 
         case ApiKeys.ADD_PARTITIONS_TO_TXN =>
-          new AddPartitionsToTxnRequest.Builder("test-transactional-id", 1, 0, List(tp).asJava)
+          AddPartitionsToTxnRequest.Builder.forClient("test-transactional-id", 1, 0, List(tp).asJava)
 
         case ApiKeys.ADD_OFFSETS_TO_TXN =>
           new AddOffsetsToTxnRequest.Builder(new AddOffsetsToTxnRequestData()
@@ -643,6 +644,10 @@ class RequestQuotaTest extends BaseRequestTest {
 
         case ApiKeys.ALLOCATE_PRODUCER_IDS =>
           new AllocateProducerIdsRequest.Builder(new AllocateProducerIdsRequestData())
+
+        case ApiKeys.CONSUMER_GROUP_HEARTBEAT =>
+          new ConsumerGroupHeartbeatRequest.Builder(new ConsumerGroupHeartbeatRequestData(), true)
+
         case _ =>
           throw new IllegalArgumentException("Unsupported API key " + apiKey)
     }

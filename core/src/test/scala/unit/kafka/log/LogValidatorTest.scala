@@ -19,16 +19,16 @@ package kafka.log
 import java.nio.ByteBuffer
 import java.util.concurrent.TimeUnit
 import kafka.server.{BrokerTopicStats, RequestLocal}
-import kafka.utils.MockTime
 import kafka.utils.TestUtils.meterCount
 import org.apache.kafka.common.errors.{InvalidTimestampException, UnsupportedCompressionTypeException, UnsupportedForMessageFormatException}
 import org.apache.kafka.common.record._
 import org.apache.kafka.common.utils.{PrimitiveRef, Time}
 import org.apache.kafka.common.{InvalidRecordException, TopicPartition}
 import org.apache.kafka.server.common.MetadataVersion
-import org.apache.kafka.server.log.internals.LogValidator.ValidationResult
-import org.apache.kafka.server.log.internals.{AppendOrigin, LogValidator, RecordValidationException}
+import org.apache.kafka.storage.internals.log.LogValidator.ValidationResult
 import org.apache.kafka.server.metrics.KafkaYammerMetrics
+import org.apache.kafka.server.util.MockTime
+import org.apache.kafka.storage.internals.log.{AppendOrigin, LogValidator, RecordValidationException}
 import org.apache.kafka.test.TestUtils
 import org.junit.jupiter.api.Assertions._
 import org.junit.jupiter.api.Test

@@ -424,8 +424,8 @@ public final class LocalLogManager implements RaftClient<ApiMessageAndVersion>, 
             offset = reader.lastOffset().getAsLong();
         }
 
-        void handleSnapshot(SnapshotReader<ApiMessageAndVersion> reader) {
-            listener.handleSnapshot(reader);
+        void handleLoadSnapshot(SnapshotReader<ApiMessageAndVersion> reader) {
+            listener.handleLoadSnapshot(reader);
             offset = reader.lastContainedLogOffset();
         }
 
@@ -501,7 +501,8 @@ public final class LocalLogManager implements RaftClient<ApiMessageAndVersion>, 
         this.nodeId = nodeId;
         this.shared = shared;
         this.maxReadOffset = shared.initialMaxReadOffset();
-        this.eventQueue = new KafkaEventQueue(Time.SYSTEM, logContext, threadNamePrefix);
+        this.eventQueue = new KafkaEventQueue(Time.SYSTEM, logContext,
+                threadNamePrefix, new ShutdownEvent());
         shared.registerLogManager(this);
     }
 
@@ -518,7 +519,7 @@ public final class LocalLogManager implements RaftClient<ApiMessageAndVersion>, 
                             Optional<RawSnapshotReader> snapshot = shared.nextSnapshot(listenerData.offset());
                             if (snapshot.isPresent()) {
                                 log.trace("Node {}: handling snapshot with id {}.", nodeId, snapshot.get().snapshotId());
-                                listenerData.handleSnapshot(
+                                listenerData.handleLoadSnapshot(
                                     RecordsSnapshotReader.of(
                                         snapshot.get(),
                                         new  MetadataRecordSerde(),
@@ -601,7 +602,12 @@ public final class LocalLogManager implements RaftClient<ApiMessageAndVersion>, 
     }
 
     public void beginShutdown() {
-        eventQueue.beginShutdown("beginShutdown", () -> {
+        eventQueue.beginShutdown("beginShutdown");
+    }
+
+    class ShutdownEvent implements EventQueue.Event {
+        @Override
+        public void run() throws Exception {
             try {
                 if (initialized && !shutdown) {
                     log.debug("Node {}: beginning shutdown.", nodeId);
@@ -609,13 +615,13 @@ public final class LocalLogManager implements RaftClient<ApiMessageAndVersion>, 
                     for (MetaLogListenerData listenerData : listeners.values()) {
                         listenerData.beginShutdown();
                     }
-                    shared.unregisterLogManager(this);
+                    shared.unregisterLogManager(LocalLogManager.this);
                 }
             } catch (Exception e) {
                 log.error("Unexpected exception while sending beginShutdown callbacks", e);
             }
             shutdown = true;
-        });
+        }
     }
 
     @Override

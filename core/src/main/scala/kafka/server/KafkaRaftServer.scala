@@ -31,8 +31,8 @@ import org.apache.kafka.metadata.KafkaConfigSchema
 import org.apache.kafka.metadata.bootstrap.{BootstrapDirectory, BootstrapMetadata}
 import org.apache.kafka.raft.RaftConfig
 import org.apache.kafka.server.config.ServerTopicConfigSynonyms
-import org.apache.kafka.server.log.internals.LogConfig
 import org.apache.kafka.server.metrics.KafkaYammerMetrics
+import org.apache.kafka.storage.internals.log.LogConfig
 
 import java.util.Optional
 import scala.collection.Seq
@@ -48,7 +48,6 @@ import scala.jdk.CollectionConverters._
 class KafkaRaftServer(
   config: KafkaConfig,
   time: Time,
-  threadNamePrefix: Option[String]
 ) extends Server with Logging {
 
   this.logIdent = s"[KafkaRaftServer nodeId=${config.nodeId}] "
@@ -71,16 +70,12 @@ class KafkaRaftServer(
     metaProps,
     time,
     metrics,
-    threadNamePrefix,
     controllerQuorumVotersFuture,
     new StandardFaultHandlerFactory(),
   )
 
   private val broker: Option[BrokerServer] = if (config.processRoles.contains(BrokerRole)) {
-    Some(new BrokerServer(
-      sharedServer,
-      offlineDirs
-    ))
+    Some(new BrokerServer(sharedServer, offlineDirs))
   } else {
     None
   }
@@ -143,7 +138,7 @@ object KafkaRaftServer {
   def initializeLogDirs(config: KafkaConfig): (MetaProperties, BootstrapMetadata, Seq[String]) = {
     val logDirs = (config.logDirs.toSet + config.metadataLogDir).toSeq
     val (rawMetaProperties, offlineDirs) = BrokerMetadataCheckpoint.
-      getBrokerMetadataAndOfflineDirs(logDirs, ignoreMissing = false)
+      getBrokerMetadataAndOfflineDirs(logDirs, ignoreMissing = false, kraftMode = true)
 
     if (offlineDirs.contains(config.metadataLogDir)) {
       throw new KafkaException("Cannot start server since `meta.properties` could not be " +

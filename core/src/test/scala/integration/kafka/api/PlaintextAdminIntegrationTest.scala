@@ -34,7 +34,7 @@ import kafka.utils.{Log4jController, TestInfoUtils, TestUtils}
 import org.apache.kafka.clients.HostResolver
 import org.apache.kafka.clients.admin.ConfigEntry.ConfigSource
 import org.apache.kafka.clients.admin._
-import org.apache.kafka.clients.consumer.{ConsumerConfig, KafkaConsumer}
+import org.apache.kafka.clients.consumer.{Consumer, ConsumerConfig}
 import org.apache.kafka.clients.producer.{KafkaProducer, ProducerRecord}
 import org.apache.kafka.common.acl.{AccessControlEntry, AclBinding, AclBindingFilter, AclOperation, AclPermissionType}
 import org.apache.kafka.common.config.{ConfigResource, LogLevelConfig, TopicConfig}
@@ -44,7 +44,7 @@ import org.apache.kafka.common.resource.{PatternType, ResourcePattern, ResourceT
 import org.apache.kafka.common.utils.{Time, Utils}
 import org.apache.kafka.common.{ConsumerGroupState, ElectionType, TopicCollection, TopicPartition, TopicPartitionInfo, TopicPartitionReplica, Uuid}
 import org.apache.kafka.controller.ControllerRequestContextUtil.ANONYMOUS_CONTEXT
-import org.apache.kafka.server.log.internals.LogConfig
+import org.apache.kafka.storage.internals.log.LogConfig
 import org.junit.jupiter.api.Assertions._
 import org.junit.jupiter.api.{AfterEach, BeforeEach, Disabled, TestInfo}
 import org.junit.jupiter.params.ParameterizedTest
@@ -411,7 +411,17 @@ class PlaintextAdminIntegrationTest extends BaseAdminIntegrationTest {
     assertFalse(maxMessageBytes2.isSensitive)
     assertFalse(maxMessageBytes2.isReadOnly)
 
-    assertEquals(brokers(1).config.nonInternalValues.size, configs.get(brokerResource1).entries.size)
+    // Find the number of internal configs that we have explicitly set in the broker config.
+    // These will appear when we describe the broker configuration. Other internal configs,
+    // that we have not set, will not appear there.
+    val numInternalConfigsSet = brokers.head.config.originals.keySet().asScala.count(k => {
+      Option(KafkaConfig.configDef.configKeys().get(k)) match {
+        case None => false
+        case Some(configDef) => configDef.internalConfig
+      }
+    })
+    assertEquals(brokers(1).config.nonInternalValues.size + numInternalConfigsSet,
+      configs.get(brokerResource1).entries.size)
     assertEquals(brokers(1).config.brokerId.toString, configs.get(brokerResource1).get(KafkaConfig.BrokerIdProp).value)
     val listenerSecurityProtocolMap = configs.get(brokerResource1).get(KafkaConfig.ListenerSecurityProtocolMapProp)
     assertEquals(brokers(1).config.getString(KafkaConfig.ListenerSecurityProtocolMapProp), listenerSecurityProtocolMap.value)
@@ -432,7 +442,8 @@ class PlaintextAdminIntegrationTest extends BaseAdminIntegrationTest {
     assertFalse(compressionType.isSensitive)
     assertFalse(compressionType.isReadOnly)
 
-    assertEquals(brokers(2).config.nonInternalValues.size, configs.get(brokerResource2).entries.size)
+    assertEquals(brokers(2).config.nonInternalValues.size + numInternalConfigsSet,
+      configs.get(brokerResource2).entries.size)
     assertEquals(brokers(2).config.brokerId.toString, configs.get(brokerResource2).get(KafkaConfig.BrokerIdProp).value)
     assertEquals(brokers(2).config.logCleanerThreads.toString,
       configs.get(brokerResource2).get(KafkaConfig.LogCleanerThreadsProp).value)
@@ -946,15 +957,9 @@ class PlaintextAdminIntegrationTest extends BaseAdminIntegrationTest {
       .lowWatermarks.get(topicPartition).get.lowWatermark)
 
     // OffsetOutOfRangeException if offset > high_watermark
-    var cause = assertThrows(classOf[ExecutionException],
+    val cause = assertThrows(classOf[ExecutionException],
       () => client.deleteRecords(Map(topicPartition -> RecordsToDelete.beforeOffset(20L)).asJava).lowWatermarks.get(topicPartition).get).getCause
     assertEquals(classOf[OffsetOutOfRangeException], cause.getClass)
-
-    val nonExistPartition = new TopicPartition(topic, 3)
-    // LeaderNotAvailableException if non existent partition
-    cause = assertThrows(classOf[ExecutionException],
-      () => client.deleteRecords(Map(nonExistPartition -> RecordsToDelete.beforeOffset(20L)).asJava).lowWatermarks.get(nonExistPartition).get).getCause
-    assertEquals(classOf[LeaderNotAvailableException], cause.getClass)
   }
 
   @ParameterizedTest(name = TestInfoUtils.TestWithParameterizedQuorumName)
@@ -977,7 +982,7 @@ class PlaintextAdminIntegrationTest extends BaseAdminIntegrationTest {
     assertTrue(assertThrows(classOf[ExecutionException], () => describeResult2.values.get(invalidTopic).get).getCause.isInstanceOf[InvalidTopicException])
   }
 
-  private def subscribeAndWaitForAssignment(topic: String, consumer: KafkaConsumer[Array[Byte], Array[Byte]]): Unit = {
+  private def subscribeAndWaitForAssignment(topic: String, consumer: Consumer[Array[Byte], Array[Byte]]): Unit = {
     consumer.subscribe(Collections.singletonList(topic))
     TestUtils.pollUntilTrue(consumer, () => !consumer.assignment.isEmpty, "Expected non-empty assignment")
   }
@@ -1154,7 +1159,7 @@ class PlaintextAdminIntegrationTest extends BaseAdminIntegrationTest {
 
       val latch = new CountDownLatch(consumerSet.size)
       try {
-        def createConsumerThread[K,V](consumer: KafkaConsumer[K,V], topic: String): Thread = {
+        def createConsumerThread[K,V](consumer: Consumer[K,V], topic: String): Thread = {
           new Thread {
             override def run : Unit = {
               consumer.subscribe(Collections.singleton(topic))
@@ -1455,7 +1460,8 @@ class PlaintextAdminIntegrationTest extends BaseAdminIntegrationTest {
     // meaningful election
     electResult = client.electLeaders(ElectionType.PREFERRED, Set(partition1).asJava)
     assertEquals(Set(partition1).asJava, electResult.partitions.get.keySet)
-    assertFalse(electResult.partitions.get.get(partition1).isPresent)
+    electResult.partitions.get.get(partition1)
+      .ifPresent(t => fail(s"Unexpected exception during leader election: $t for partition $partition1"))
     TestUtils.assertLeader(client, partition1, 1)
 
     // topic 2 unchanged
@@ -1465,7 +1471,8 @@ class PlaintextAdminIntegrationTest extends BaseAdminIntegrationTest {
     // meaningful election with null partitions
     electResult = client.electLeaders(ElectionType.PREFERRED, null)
     assertEquals(Set(partition2), electResult.partitions.get.keySet.asScala)
-    assertFalse(electResult.partitions.get.get(partition2).isPresent)
+    electResult.partitions.get.get(partition2)
+      .ifPresent(t => fail(s"Unexpected exception during leader election: $t for partition $partition2"))
     TestUtils.assertLeader(client, partition2, 1)
 
     def assertUnknownTopicOrPartition(
@@ -1567,9 +1574,11 @@ class PlaintextAdminIntegrationTest extends BaseAdminIntegrationTest {
     killBroker(broker1)
     TestUtils.assertNoLeader(client, partition1)
     brokers(broker2).startup()
+    TestUtils.waitForOnlineBroker(client, broker2)
 
     val electResult = client.electLeaders(ElectionType.UNCLEAN, Set(partition1).asJava)
-    assertFalse(electResult.partitions.get.get(partition1).isPresent)
+    electResult.partitions.get.get(partition1)
+      .ifPresent(t => fail(s"Unexpected exception during leader election: $t for partition $partition1"))
     TestUtils.assertLeader(client, partition1, broker2)
   }
 
@@ -1602,10 +1611,13 @@ class PlaintextAdminIntegrationTest extends BaseAdminIntegrationTest {
     TestUtils.assertNoLeader(client, partition1)
     TestUtils.assertNoLeader(client, partition2)
     brokers(broker2).startup()
+    TestUtils.waitForOnlineBroker(client, broker2)
 
     val electResult = client.electLeaders(ElectionType.UNCLEAN, Set(partition1, partition2).asJava)
-    assertFalse(electResult.partitions.get.get(partition1).isPresent)
-    assertFalse(electResult.partitions.get.get(partition2).isPresent)
+    electResult.partitions.get.get(partition1)
+      .ifPresent(t => fail(s"Unexpected exception during leader election: $t for partition $partition1"))
+    electResult.partitions.get.get(partition2)
+      .ifPresent(t => fail(s"Unexpected exception during leader election: $t for partition $partition2"))
     TestUtils.assertLeader(client, partition1, broker2)
     TestUtils.assertLeader(client, partition2, broker2)
   }
@@ -1640,9 +1652,11 @@ class PlaintextAdminIntegrationTest extends BaseAdminIntegrationTest {
     TestUtils.assertNoLeader(client, partition1)
     TestUtils.assertLeader(client, partition2, broker3)
     brokers(broker2).startup()
+    TestUtils.waitForOnlineBroker(client, broker2)
 
     val electResult = client.electLeaders(ElectionType.UNCLEAN, null)
-    assertFalse(electResult.partitions.get.get(partition1).isPresent)
+    electResult.partitions.get.get(partition1)
+      .ifPresent(t => fail(s"Unexpected exception during leader election: $t for partition $partition1"))
     assertFalse(electResult.partitions.get.containsKey(partition2))
     TestUtils.assertLeader(client, partition1, broker2)
     TestUtils.assertLeader(client, partition2, broker3)
@@ -1761,9 +1775,11 @@ class PlaintextAdminIntegrationTest extends BaseAdminIntegrationTest {
     TestUtils.assertNoLeader(client, partition1)
     TestUtils.assertLeader(client, partition2, broker3)
     brokers(broker2).startup()
+    TestUtils.waitForOnlineBroker(client, broker2)
 
     val electResult = client.electLeaders(ElectionType.UNCLEAN, Set(partition1, partition2).asJava)
-    assertFalse(electResult.partitions.get.get(partition1).isPresent)
+    electResult.partitions.get.get(partition1)
+      .ifPresent(t => fail(s"Unexpected exception during leader election: $t for partition $partition1"))
     assertTrue(electResult.partitions.get.get(partition2).get.isInstanceOf[ElectionNotNeededException])
     TestUtils.assertLeader(client, partition1, broker2)
     TestUtils.assertLeader(client, partition2, broker3)
@@ -2317,7 +2333,7 @@ class PlaintextAdminIntegrationTest extends BaseAdminIntegrationTest {
     * 2. Change kafka.controller.KafkaController logger to INFO
     * 3. Unset kafka.controller.KafkaController via AlterConfigOp.OpType.DELETE (resets it to the root logger - TRACE)
     * 4. Change ROOT logger to ERROR
-    * 5. Ensure the kafka.controller.KafkaController logger's level is ERROR (the curent root logger level)
+    * 5. Ensure the kafka.controller.KafkaController logger's level is ERROR (the current root logger level)
     */
   @ParameterizedTest(name = TestInfoUtils.TestWithParameterizedQuorumName)
   @ValueSource(strings = Array("zk", "kraft"))

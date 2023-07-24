@@ -18,10 +18,9 @@
 package kafka.log
 
 import com.yammer.metrics.core.{Gauge, MetricName}
-import kafka.log.remote.RemoteIndexCache
 import kafka.server.checkpoints.OffsetCheckpointFile
 import kafka.server.metadata.{ConfigRepository, MockConfigRepository}
-import kafka.server.{BrokerTopicStats, FetchDataInfo, FetchLogEnd}
+import kafka.server.BrokerTopicStats
 import kafka.utils._
 import org.apache.directory.api.util.FileUtils
 import org.apache.kafka.common.config.TopicConfig
@@ -38,8 +37,9 @@ import java.io._
 import java.nio.file.Files
 import java.util.concurrent.{ConcurrentHashMap, ConcurrentMap, Future}
 import java.util.{Collections, Properties}
-import org.apache.kafka.server.log.internals.{LogConfig, LogDirFailureChannel}
 import org.apache.kafka.server.metrics.KafkaYammerMetrics
+import org.apache.kafka.server.util.MockTime
+import org.apache.kafka.storage.internals.log.{FetchDataInfo, FetchIsolation, LogConfig, LogDirFailureChannel, ProducerStateManagerConfig, RemoteIndexCache}
 
 import scala.collection.{Map, mutable}
 import scala.collection.mutable.ArrayBuffer
@@ -375,7 +375,7 @@ class LogManagerTest {
   @Test
   def testLoadLogsSkipRemoteIndexCache(): Unit = {
     val logDir = TestUtils.tempDir()
-    val remoteIndexCache = new File(logDir, RemoteIndexCache.DirName)
+    val remoteIndexCache = new File(logDir, RemoteIndexCache.DIR_NAME)
     remoteIndexCache.mkdir()
     logManager = createLogManager(Seq(logDir))
     logManager.loadLogs(logConfig, Map.empty)
@@ -517,7 +517,7 @@ class LogManagerTest {
   }
 
   private def readLog(log: UnifiedLog, offset: Long, maxLength: Int = 1024): FetchDataInfo = {
-    log.read(offset, maxLength, isolation = FetchLogEnd, minOneMessage = true)
+    log.read(offset, maxLength, isolation = FetchIsolation.LOG_END, minOneMessage = true)
   }
 
   /**
@@ -662,7 +662,7 @@ class LogManagerTest {
     val segmentBytes = 1024
 
     val log = LogTestUtils.createLog(tpFile, logConfig, brokerTopicStats, time.scheduler, time, 0, 0,
-      5 * 60 * 1000, new ProducerStateManagerConfig(kafka.server.Defaults.ProducerIdExpirationMs), kafka.server.Defaults.ProducerIdExpirationCheckIntervalMs)
+      5 * 60 * 1000, new ProducerStateManagerConfig(kafka.server.Defaults.ProducerIdExpirationMs, false), kafka.server.Defaults.ProducerIdExpirationCheckIntervalMs)
 
     assertTrue(expectedSegmentsPerLog > 0)
     // calculate numMessages to append to logs. It'll create "expectedSegmentsPerLog" log segments with segment.bytes=1024
@@ -679,10 +679,10 @@ class LogManagerTest {
   }
 
   private def verifyRemainingLogsToRecoverMetric(spyLogManager: LogManager, expectedParams: Map[String, Int]): Unit = {
-    val spyLogManagerClassName = spyLogManager.getClass().getSimpleName
+    val logManagerClassName = classOf[LogManager].getSimpleName
     // get all `remainingLogsToRecover` metrics
     val logMetrics: ArrayBuffer[Gauge[Int]] = KafkaYammerMetrics.defaultRegistry.allMetrics.asScala
-      .filter { case (metric, _) => metric.getType == s"$spyLogManagerClassName" && metric.getName == "remainingLogsToRecover" }
+      .filter { case (metric, _) => metric.getType == s"$logManagerClassName" && metric.getName == "remainingLogsToRecover" }
       .map { case (_, gauge) => gauge }
       .asInstanceOf[ArrayBuffer[Gauge[Int]]]
 
@@ -709,10 +709,10 @@ class LogManagerTest {
                                                      recoveryThreadsPerDataDir: Int,
                                                      mockMap: ConcurrentHashMap[String, Int],
                                                      expectedParams: Map[String, Int]): Unit = {
-    val spyLogManagerClassName = spyLogManager.getClass().getSimpleName
+    val logManagerClassName = classOf[LogManager].getSimpleName
     // get all `remainingSegmentsToRecover` metrics
     val logSegmentMetrics: ArrayBuffer[Gauge[Int]] = KafkaYammerMetrics.defaultRegistry.allMetrics.asScala
-          .filter { case (metric, _) => metric.getType == s"$spyLogManagerClassName" && metric.getName == "remainingSegmentsToRecover" }
+          .filter { case (metric, _) => metric.getType == s"$logManagerClassName" && metric.getName == "remainingSegmentsToRecover" }
           .map { case (_, gauge) => gauge }
           .asInstanceOf[ArrayBuffer[Gauge[Int]]]
 
@@ -797,7 +797,7 @@ class LogManagerTest {
         logStartOffset = 0,
         recoveryPoint = 0,
         maxTransactionTimeoutMs = 5 * 60 * 1000,
-        producerStateManagerConfig = new ProducerStateManagerConfig(5 * 60 * 1000),
+        producerStateManagerConfig = new ProducerStateManagerConfig(5 * 60 * 1000, false),
         producerIdExpirationCheckIntervalMs = kafka.server.Defaults.ProducerIdExpirationCheckIntervalMs,
         scheduler = mockTime.scheduler,
         time = mockTime,

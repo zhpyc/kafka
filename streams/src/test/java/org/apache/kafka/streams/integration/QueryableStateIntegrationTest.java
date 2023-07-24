@@ -16,7 +16,6 @@
  */
 package org.apache.kafka.streams.integration;
 
-import kafka.utils.MockTime;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.producer.KafkaProducer;
 import org.apache.kafka.clients.producer.ProducerConfig;
@@ -28,6 +27,7 @@ import org.apache.kafka.common.serialization.Serdes;
 import org.apache.kafka.common.serialization.StringDeserializer;
 import org.apache.kafka.common.serialization.StringSerializer;
 import org.apache.kafka.common.utils.Bytes;
+import org.apache.kafka.server.util.MockTime;
 import org.apache.kafka.streams.KafkaStreams;
 import org.apache.kafka.streams.KafkaStreams.State;
 import org.apache.kafka.streams.KafkaStreamsTest;
@@ -56,12 +56,10 @@ import org.apache.kafka.streams.state.ReadOnlyKeyValueStore;
 import org.apache.kafka.streams.state.ReadOnlySessionStore;
 import org.apache.kafka.streams.state.ReadOnlyWindowStore;
 import org.apache.kafka.streams.state.WindowStoreIterator;
-import org.apache.kafka.test.IntegrationTest;
 import org.apache.kafka.test.MockMapper;
 import org.apache.kafka.test.NoRetryException;
 import org.apache.kafka.test.TestUtils;
 import org.hamcrest.Matchers;
-import org.junit.experimental.categories.Category;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
@@ -69,6 +67,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInfo;
 import org.junit.jupiter.api.Timeout;
+import org.junit.jupiter.api.Tag;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -110,7 +109,6 @@ import static org.apache.kafka.streams.integration.utils.IntegrationTestUtils.st
 import static org.apache.kafka.streams.integration.utils.IntegrationTestUtils.waitForApplicationState;
 import static org.apache.kafka.streams.state.QueryableStoreTypes.keyValueStore;
 import static org.apache.kafka.streams.state.QueryableStoreTypes.sessionStore;
-import static org.apache.kafka.test.StreamsTestUtils.startKafkaStreamsAndWaitForRunningState;
 import static org.apache.kafka.test.TestUtils.retryOnExceptionWithTimeout;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.is;
@@ -120,7 +118,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 @Timeout(600)
-@Category({IntegrationTest.class})
+@Tag("integration")
 @SuppressWarnings("deprecation")
 public class QueryableStateIntegrationTest {
     private static final Logger log = LoggerFactory.getLogger(QueryableStateIntegrationTest.class);
@@ -554,12 +552,13 @@ public class QueryableStateIntegrationTest {
             listeners.add(listener);
             streamsList.add(streams);
         }
-        startApplicationAndWaitUntilRunning(streamsList, Duration.ofSeconds(60));
-
-        final Set<String> stores = mkSet(storeName + "-" + streamThree, windowStoreName + "-" + streamThree);
-        verifyOffsetLagFetch(streamsList, stores, Arrays.asList(4, 4));
 
         try {
+            startApplicationAndWaitUntilRunning(streamsList, Duration.ofSeconds(60));
+
+            final Set<String> stores = mkSet(storeName + "-" + streamThree, windowStoreName + "-" + streamThree);
+            verifyOffsetLagFetch(streamsList, stores, Arrays.asList(4, 4));
+
             waitUntilAtLeastNumRecordProcessed(outputTopicThree, 1);
 
             for (int i = 0; i < streamsList.size(); i++) {
@@ -656,10 +655,11 @@ public class QueryableStateIntegrationTest {
             listeners.add(listener);
             streamsList.add(streams);
         }
-        startApplicationAndWaitUntilRunning(streamsList, ofSeconds(60));
-        verifyOffsetLagFetch(streamsList, stores, Arrays.asList(8, 8));
 
         try {
+            startApplicationAndWaitUntilRunning(streamsList, ofSeconds(60));
+            verifyOffsetLagFetch(streamsList, stores, Arrays.asList(8, 8));
+
             waitUntilAtLeastNumRecordProcessed(outputTopicThree, 1);
 
             // Ensure each thread can serve all keys by itself; i.e standby replication works.
@@ -766,7 +766,7 @@ public class QueryableStateIntegrationTest {
         t2.toStream().to(outputTopic);
 
         kafkaStreams = new KafkaStreams(builder.build(), streamsConfiguration);
-        startKafkaStreamsAndWaitForRunningState(kafkaStreams);
+        startApplicationAndWaitUntilRunning(kafkaStreams);
 
         waitUntilAtLeastNumRecordProcessed(outputTopic, 1);
 
@@ -833,7 +833,7 @@ public class QueryableStateIntegrationTest {
             .to(outputTopic, Produced.with(Serdes.String(), Serdes.Long()));
 
         kafkaStreams = new KafkaStreams(builder.build(), streamsConfiguration);
-        startKafkaStreamsAndWaitForRunningState(kafkaStreams);
+        startApplicationAndWaitUntilRunning(kafkaStreams);
 
         waitUntilAtLeastNumRecordProcessed(outputTopic, 5);
 
@@ -890,7 +890,7 @@ public class QueryableStateIntegrationTest {
             .to(outputTopic, Produced.with(Serdes.String(), Serdes.Long()));
 
         kafkaStreams = new KafkaStreams(builder.build(), streamsConfiguration);
-        startKafkaStreamsAndWaitForRunningState(kafkaStreams);
+        startApplicationAndWaitUntilRunning(kafkaStreams);
 
         waitUntilAtLeastNumRecordProcessed(outputTopic, 5);
 
@@ -942,7 +942,7 @@ public class QueryableStateIntegrationTest {
         t3.toStream().to(outputTopic, Produced.with(Serdes.String(), Serdes.Long()));
 
         kafkaStreams = new KafkaStreams(builder.build(), streamsConfiguration);
-        startKafkaStreamsAndWaitForRunningState(kafkaStreams);
+        startApplicationAndWaitUntilRunning(kafkaStreams);
 
         waitUntilAtLeastNumRecordProcessed(outputTopic, 1);
 
@@ -1003,7 +1003,7 @@ public class QueryableStateIntegrationTest {
             .windowedBy(TimeWindows.of(ofMillis(WINDOW_SIZE)))
             .count(Materialized.as(windowStoreName));
         kafkaStreams = new KafkaStreams(builder.build(), streamsConfiguration);
-        startKafkaStreamsAndWaitForRunningState(kafkaStreams);
+        startApplicationAndWaitUntilRunning(kafkaStreams);
 
         waitUntilAtLeastNumRecordProcessed(outputTopic, 1);
 
@@ -1030,7 +1030,7 @@ public class QueryableStateIntegrationTest {
         final String storeName = "count-by-key";
         stream.groupByKey().count(Materialized.as(storeName));
         kafkaStreams = new KafkaStreams(builder.build(), streamsConfiguration);
-        startKafkaStreamsAndWaitForRunningState(kafkaStreams);
+        startApplicationAndWaitUntilRunning(kafkaStreams);
 
         final KeyValue<String, String> hello = KeyValue.pair("hello", "hello");
         IntegrationTestUtils.produceKeyValuesSynchronously(
@@ -1058,7 +1058,7 @@ public class QueryableStateIntegrationTest {
 
         // start again, and since it may take time to restore we wait for it to transit to RUNNING a bit longer
         kafkaStreams = new KafkaStreams(builder.build(), streamsConfiguration);
-        startKafkaStreamsAndWaitForRunningState(kafkaStreams, maxWaitMs);
+        startApplicationAndWaitUntilRunning(kafkaStreams);
 
         // make sure we never get any value other than 8 for hello
         TestUtils.waitForCondition(
@@ -1101,8 +1101,7 @@ public class QueryableStateIntegrationTest {
         kafkaStreams = new KafkaStreams(builder.build(), streamsConfiguration);
         kafkaStreams.setUncaughtExceptionHandler((t, e) -> failed.set(true));
 
-        // since we start with two threads, wait for a bit longer for both of them to transit to running
-        startKafkaStreamsAndWaitForRunningState(kafkaStreams, 30000);
+        startApplicationAndWaitUntilRunning(kafkaStreams);
 
         IntegrationTestUtils.produceKeyValuesSynchronously(
             streamOne,

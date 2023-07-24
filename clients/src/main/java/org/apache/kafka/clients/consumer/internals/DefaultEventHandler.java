@@ -126,7 +126,9 @@ public class DefaultEventHandler implements EventHandler {
             this.applicationEventQueue,
             this.backgroundEventQueue,
             metadata,
+            subscriptionState,
             networkClient);
+        this.backgroundThread.start();
     }
 
     // VisibleForTesting
@@ -136,6 +138,7 @@ public class DefaultEventHandler implements EventHandler {
                         final LogContext logContext,
                         final BlockingQueue<ApplicationEvent> applicationEventQueue,
                         final BlockingQueue<BackgroundEvent> backgroundEventQueue,
+                        final SubscriptionState subscriptionState,
                         final ConsumerMetadata metadata,
                         final KafkaClient networkClient) {
         this.applicationEventQueue = applicationEventQueue;
@@ -148,6 +151,7 @@ public class DefaultEventHandler implements EventHandler {
             this.applicationEventQueue,
             this.backgroundEventQueue,
             metadata,
+            subscriptionState,
             networkClient);
         backgroundThread.start();
     }

@@ -104,7 +104,7 @@ public class SmokeTestDriverIntegrationTest {
     // In this test, we try to keep creating new stream, and closing the old one, to maintain only 3 streams alive.
     // During the new stream added and old stream left, the stream process should still complete without issue.
     // We set 2 timeout condition to fail the test before passing the verification:
-    // (1) 6 min timeout, (2) 30 tries of polling without getting any data
+    // (1) 10 min timeout, (2) 30 tries of polling without getting any data
     @ParameterizedTest
     @MethodSource("parameters")
     public void shouldWorkWithRebalance(final boolean stateUpdaterEnabled) throws InterruptedException {

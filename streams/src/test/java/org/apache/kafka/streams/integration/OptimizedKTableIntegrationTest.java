@@ -52,10 +52,8 @@ import org.apache.kafka.streams.kstream.Materialized;
 import org.apache.kafka.streams.state.KeyValueStore;
 import org.apache.kafka.streams.state.QueryableStoreTypes;
 import org.apache.kafka.streams.state.ReadOnlyKeyValueStore;
-import org.apache.kafka.test.IntegrationTest;
 import org.apache.kafka.test.NoRetryException;
 import org.apache.kafka.test.TestUtils;
-import org.junit.experimental.categories.Category;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
@@ -63,11 +61,12 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInfo;
 import org.junit.jupiter.api.Timeout;
+import org.junit.jupiter.api.Tag;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 @Timeout(600)
-@Category(IntegrationTest.class)
+@Tag("integration")
 public class OptimizedKTableIntegrationTest {
     private static final Logger LOG = LoggerFactory.getLogger(OptimizedKTableIntegrationTest.class);
     private static final int NUM_BROKERS = 1;
@@ -121,57 +120,62 @@ public class OptimizedKTableIntegrationTest {
         final KafkaStreams kafkaStreams2 = createKafkaStreams(builder, streamsConfiguration(testInfo));
         final List<KafkaStreams> kafkaStreamsList = Arrays.asList(kafkaStreams1, kafkaStreams2);
 
-        startApplicationAndWaitUntilRunning(kafkaStreamsList, Duration.ofSeconds(60));
+        try {
+            startApplicationAndWaitUntilRunning(kafkaStreamsList, Duration.ofSeconds(60));
 
-        produceValueRange(key, 0, batch1NumMessages);
+            produceValueRange(key, 0, batch1NumMessages);
 
-        // Assert that all messages in the first batch were processed in a timely manner
-        assertThat(semaphore.tryAcquire(batch1NumMessages, 60, TimeUnit.SECONDS), is(equalTo(true)));
+            // Assert that all messages in the first batch were processed in a timely manner
+            assertThat(semaphore.tryAcquire(batch1NumMessages, 60, TimeUnit.SECONDS), is(equalTo(true)));
 
-        final AtomicReference<ReadOnlyKeyValueStore<Integer, Integer>> newActiveStore = new AtomicReference<>(null);
-        TestUtils.retryOnExceptionWithTimeout(() -> {
-            final ReadOnlyKeyValueStore<Integer, Integer> store1 = IntegrationTestUtils.getStore(TABLE_NAME, kafkaStreams1, QueryableStoreTypes.keyValueStore());
-            final ReadOnlyKeyValueStore<Integer, Integer> store2 = IntegrationTestUtils.getStore(TABLE_NAME, kafkaStreams2, QueryableStoreTypes.keyValueStore());
+            final AtomicReference<ReadOnlyKeyValueStore<Integer, Integer>> newActiveStore = new AtomicReference<>(null);
+            TestUtils.retryOnExceptionWithTimeout(() -> {
+                final ReadOnlyKeyValueStore<Integer, Integer> store1 = IntegrationTestUtils.getStore(TABLE_NAME, kafkaStreams1, QueryableStoreTypes.keyValueStore());
+                final ReadOnlyKeyValueStore<Integer, Integer> store2 = IntegrationTestUtils.getStore(TABLE_NAME, kafkaStreams2, QueryableStoreTypes.keyValueStore());
 
-            final KeyQueryMetadata keyQueryMetadata = kafkaStreams1.queryMetadataForKey(TABLE_NAME, key, (topic, somekey, value, numPartitions) -> 0);
+                final KeyQueryMetadata keyQueryMetadata = kafkaStreams1.queryMetadataForKey(TABLE_NAME, key, (topic, somekey, value, numPartitions) -> 0);
 
-            try {
-                // Assert that the current value in store reflects all messages being processed
-                if ((keyQueryMetadata.activeHost().port() % 2) == 1) {
-                    assertThat(store1.get(key), is(equalTo(batch1NumMessages - 1)));
-                    kafkaStreams1.close();
-                    newActiveStore.set(store2);
-                } else {
-                    assertThat(store2.get(key), is(equalTo(batch1NumMessages - 1)));
-                    kafkaStreams2.close();
-                    newActiveStore.set(store1);
+                try {
+                    // Assert that the current value in store reflects all messages being processed
+                    if ((keyQueryMetadata.activeHost().port() % 2) == 1) {
+                        assertThat(store1.get(key), is(equalTo(batch1NumMessages - 1)));
+                        kafkaStreams1.close();
+                        newActiveStore.set(store2);
+                    } else {
+                        assertThat(store2.get(key), is(equalTo(batch1NumMessages - 1)));
+                        kafkaStreams2.close();
+                        newActiveStore.set(store1);
+                    }
+                } catch (final InvalidStateStoreException e) {
+                    LOG.warn("Detected an unexpected rebalance during test. Retrying if possible.", e);
+                    throw e;
+                } catch (final Throwable t) {
+                    LOG.error("Caught non-retriable exception in test. Exiting.", t);
+                    throw new NoRetryException(t);
                 }
-            } catch (final InvalidStateStoreException e) {
-                LOG.warn("Detected an unexpected rebalance during test. Retrying if possible.", e);
-                throw e;
-            } catch (final Throwable t) {
-                LOG.error("Caught non-retriable exception in test. Exiting.", t);
-                throw new NoRetryException(t);
-            }
-        });
+            });
 
-        // Wait for failover
-        TestUtils.retryOnExceptionWithTimeout(60 * 1000, 100, () -> {
-            // Assert that after failover we have recovered to the last store write
-            assertThat(newActiveStore.get().get(key), is(equalTo(batch1NumMessages - 1)));
-        });
+            // Wait for failover
+            TestUtils.retryOnExceptionWithTimeout(60 * 1000, 100, () -> {
+                // Assert that after failover we have recovered to the last store write
+                assertThat(newActiveStore.get().get(key), is(equalTo(batch1NumMessages - 1)));
+            });
 
-        final int totalNumMessages = batch1NumMessages + batch2NumMessages;
+            final int totalNumMessages = batch1NumMessages + batch2NumMessages;
 
-        produceValueRange(key, batch1NumMessages, totalNumMessages);
+            produceValueRange(key, batch1NumMessages, totalNumMessages);
 
-        // Assert that all messages in the second batch were processed in a timely manner
-        assertThat(semaphore.tryAcquire(batch2NumMessages, 60, TimeUnit.SECONDS), is(equalTo(true)));
+            // Assert that all messages in the second batch were processed in a timely manner
+            assertThat(semaphore.tryAcquire(batch2NumMessages, 60, TimeUnit.SECONDS), is(equalTo(true)));
 
-        TestUtils.retryOnExceptionWithTimeout(60 * 1000, 100, () -> {
-            // Assert that the current value in store reflects all messages being processed
-            assertThat(newActiveStore.get().get(key), is(equalTo(totalNumMessages - 1)));
-        });
+            TestUtils.retryOnExceptionWithTimeout(60 * 1000, 100, () -> {
+                // Assert that the current value in store reflects all messages being processed
+                assertThat(newActiveStore.get().get(key), is(equalTo(totalNumMessages - 1)));
+            });
+        } finally {
+            kafkaStreams1.close();
+            kafkaStreams2.close();
+        }
     }
 
     private void produceValueRange(final int key, final int start, final int endExclusive) {
